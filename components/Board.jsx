@@ -33,6 +33,7 @@ function findGroup(b, groupId) {
 }
 
 export default function Board({ project }) {
+  const [name, setName] = useState(project.name);
   const [board, setBoard] = useState(() => ({
     columns: Array.isArray(project.board?.columns) ? project.board.columns : [],
   }));
@@ -137,6 +138,21 @@ export default function Board({ project }) {
     } else if (e.key === "Escape") {
       cancelComposer();
     }
+  }
+
+  // ---------- project name ----------
+  function saveName() {
+    const v = name.trim();
+    if (!v) {
+      setName(project.name);
+      return;
+    }
+    if (v === project.name) return;
+    fetch(`/api/projects/${project.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: v }),
+    }).catch(() => {});
   }
 
   // ---------- item actions ----------
@@ -626,7 +642,16 @@ export default function Board({ project }) {
         <Link href="/" className="btn">
           ← Projects
         </Link>
-        <h1>{project.name}</h1>
+        <input
+          className="proj-title"
+          value={name}
+          size={Math.max(8, Math.min(40, name.length))}
+          maxLength={80}
+          aria-label="Project name"
+          onChange={(e) => setName(e.target.value)}
+          onBlur={saveName}
+          onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
+        />
         <input
           className="search"
           type="search"
