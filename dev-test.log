@@ -1,0 +1,151 @@
+
+> kanban@0.1.0 dev
+> next dev -p 3457
+
+▲ Next.js 16.4.2 (Turbopack)
+- Local:         http://localhost:3457
+- Network:       http://192.168.1.202:3457
+✓ Ready in 595ms
+✓ Running next.config.mjs took 32ms
+- Cache Components enabled
+- Partial Prefetching enabled
+
+○ Compiling / ...
+ GET / 200 in 531ms (next.js: 268ms, application-code: 263ms)
+[Upstash Redis] Unable to find environment variable: `UPSTASH_REDIS_REST_URL`. To create a database instantly (no signup needed), run: curl -X POST https://upstash.com/start-redis
+[Upstash Redis] Unable to find environment variable: `UPSTASH_REDIS_REST_TOKEN`. To create a database instantly (no signup needed), run: curl -X POST https://upstash.com/start-redis
+[Upstash Redis] The 'url' property is missing or undefined in your Redis config. To create a database instantly (no signup needed), run: curl -X POST https://upstash.com/start-redis
+[Upstash Redis] The 'token' property is missing or undefined in your Redis config. To create a database instantly (no signup needed), run: curl -X POST https://upstash.com/start-redis
+[Upstash Redis] Redis client was initialized without url or token. Failed to execute command.
+⨯ TypeError: Failed to parse URL from 
+    at async GET (app\api\projects\route.js:12:15)
+  10 |
+  11 | export async function GET() {
+> 12 |   const ids = await db().smembers(PROJECTS_SET);
+     |               ^
+  13 |   const raw = await Promise.all(ids.map((id) => db().get(projectKey(id))));
+  14 |   const projects = raw
+  15 |     .filter(Boolean) {
+  [cause]: TypeError: Invalid URL
+      at async GET (app\api\projects\route.js:12:15)
+    10 |
+    11 | export async function GET() {
+  > 12 |   const ids = await db().smembers(PROJECTS_SET);
+       |               ^
+    13 |   const raw = await Promise.all(ids.map((id) => db().get(projectKey(id))));
+    14 |   const projects = raw
+    15 |     .filter(Boolean) {
+    code: 'ERR_INVALID_URL',
+    input: ''
+  }
+}
+ GET /api/projects 500 in 4.8s (next.js: 214ms, application-code: 4.6s)
+ GET / 200 in 40ms (next.js: 4ms, application-code: 36ms)
+ GET / 200 in 53ms (next.js: 6ms, application-code: 46ms)
+[Upstash Redis] Redis client was initialized without url or token. Failed to execute command.
+⨯ TypeError: Failed to parse URL from 
+    at async GET (app\api\projects\route.js:12:15)
+  10 |
+  11 | export async function GET() {
+> 12 |   const ids = await db().smembers(PROJECTS_SET);
+     |               ^
+  13 |   const raw = await Promise.all(ids.map((id) => db().get(projectKey(id))));
+  14 |   const projects = raw
+  15 |     .filter(Boolean) {
+  [cause]: TypeError: Invalid URL
+      at async GET (app\api\projects\route.js:12:15)
+    10 |
+    11 | export async function GET() {
+  > 12 |   const ids = await db().smembers(PROJECTS_SET);
+       |               ^
+    13 |   const raw = await Promise.all(ids.map((id) => db().get(projectKey(id))));
+    14 |   const projects = raw
+    15 |     .filter(Boolean) {
+    code: 'ERR_INVALID_URL',
+    input: ''
+  }
+}
+ GET /api/projects 500 in 4.3s (next.js: 3ms, application-code: 4.3s)
+[Upstash Redis] Redis client was initialized without url or token. Failed to execute command.
+[browser] ⨯ unhandledRejection: SyntaxError: Failed to execute 'json' on 'Response': Unexpected end of JSON input
+    at load (app/page.js:16:27)
+  14 |   async function load() {
+  15 |     const res = await fetch("/api/projects");
+> 16 |     setProjects(await res.json());
+     |                           ^
+  17 |   }
+  18 |
+  19 |   useEffect(() => {
+ GET /api/projects 200 in 663ms (next.js: 1.1ms, application-code: 662ms)
+ GET / 200 in 120ms (next.js: 4ms, application-code: 116ms)
+[Upstash Redis] Redis client was initialized without url or token. Failed to execute command.
+⨯ TypeError: Failed to parse URL from 
+    at async GET (app\api\projects\route.js:12:15)
+  10 |
+  11 | export async function GET() {
+> 12 |   const ids = await db().smembers(PROJECTS_SET);
+     |               ^
+  13 |   const raw = await Promise.all(ids.map((id) => db().get(projectKey(id))));
+  14 |   const projects = raw
+  15 |     .filter(Boolean) {
+  [cause]: TypeError: Invalid URL
+      at async GET (app\api\projects\route.js:12:15)
+    10 |
+    11 | export async function GET() {
+  > 12 |   const ids = await db().smembers(PROJECTS_SET);
+       |               ^
+    13 |   const raw = await Promise.all(ids.map((id) => db().get(projectKey(id))));
+    14 |   const projects = raw
+    15 |     .filter(Boolean) {
+    code: 'ERR_INVALID_URL',
+    input: ''
+  }
+}
+⨯ TypeError: Failed to parse URL from 
+    at async GET (app\api\projects\route.js:12:15)
+  10 |
+  11 | export async function GET() {
+> 12 |   const ids = await db().smembers(PROJECTS_SET);
+     |               ^
+  13 |   const raw = await Promise.all(ids.map((id) => db().get(projectKey(id))));
+  14 |   const projects = raw
+  15 |     .filter(Boolean) {
+  [cause]: TypeError: Invalid URL
+      at async GET (app\api\projects\route.js:12:15)
+    10 |
+    11 | export async function GET() {
+  > 12 |   const ids = await db().smembers(PROJECTS_SET);
+       |               ^
+    13 |   const raw = await Promise.all(ids.map((id) => db().get(projectKey(id))));
+    14 |   const projects = raw
+    15 |     .filter(Boolean) {
+    code: 'ERR_INVALID_URL',
+    input: ''
+  }
+}
+ GET /api/projects 500 in 4.4s (next.js: 6ms, application-code: 4.3s)
+[Upstash Redis] Redis client was initialized without url or token. Failed to execute command.
+⨯ TypeError: Failed to parse URL from 
+    at async GET (app\api\projects\route.js:12:15)
+  10 |
+  11 | export async function GET() {
+> 12 |   const ids = await db().smembers(PROJECTS_SET);
+     |               ^
+  13 |   const raw = await Promise.all(ids.map((id) => db().get(projectKey(id))));
+  14 |   const projects = raw
+  15 |     .filter(Boolean) {
+  [cause]: TypeError: Invalid URL
+      at async GET (app\api\projects\route.js:12:15)
+    10 |
+    11 | export async function GET() {
+  > 12 |   const ids = await db().smembers(PROJECTS_SET);
+       |               ^
+    13 |   const raw = await Promise.all(ids.map((id) => db().get(projectKey(id))));
+    14 |   const projects = raw
+    15 |     .filter(Boolean) {
+    code: 'ERR_INVALID_URL',
+    input: ''
+  }
+}
+ GET /api/projects 500 in 4.3s (next.js: 2ms, application-code: 4.3s)
+[?25h
