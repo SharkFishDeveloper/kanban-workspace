@@ -1,17 +1,51 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import ThemeToggle from "@/components/ThemeToggle";
+import { useToast } from "@/components/Toast";
+import {
+  btnGhost,
+  btnPrimary,
+  btnPrimarySm,
+  btnSm,
+  field,
+  iconBtn,
+} from "@/components/ui";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Columns,
+  Copy,
+  GripVertical,
+  MoreHorizontal,
+  Plus,
+  Search,
+  Trash,
+  X,
+} from "@/components/icons";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+
 const PRIOS = [
   ["", "None"],
   ["low", "Low"],
   ["medium", "Medium"],
   ["high", "High"],
 ];
+
+const PRIO_STYLE = {
+  "": "border-line bg-transparent text-muted",
+  low: "border-lo/30 bg-lo-soft text-lo",
+  medium: "border-med/30 bg-med-soft text-med",
+  high: "border-hi/30 bg-hi-soft text-hi",
+};
+
 const nt = (n) => (n === 1 ? "1 todo" : n + " todos");
 
 function locate(b, itemId) {
@@ -32,29 +66,91 @@ function findGroup(b, groupId) {
   return null;
 }
 
+function isTyping(el) {
+  return (
+    el &&
+    (el.tagName === "INPUT" ||
+      el.tagName === "TEXTAREA" ||
+      el.tagName === "SELECT" ||
+      el.isContentEditable)
+  );
+}
+
+function Highlight({ text, term }) {
+  if (!term) return text;
+  const lower = text.toLowerCase();
+  const parts = [];
+  let from = 0;
+  let at = lower.indexOf(term);
+  let key = 0;
+  while (at !== -1) {
+    if (at > from) parts.push(text.slice(from, at));
+    parts.push(
+      <mark
+        key={key++}
+        className="rounded bg-accent-soft px-0.5 text-accent"
+      >
+        {text.slice(at, at + term.length)}
+      </mark>
+    );
+    from = at + term.length;
+    at = lower.indexOf(term, from);
+  }
+  if (from < text.length) parts.push(text.slice(from));
+  return parts;
+}
+
+function SaveStatus({ state }) {
+  const dot =
+    state === "error" ? "bg-hi" : state === "saved" ? "bg-lo" : "bg-med";
+  const label =
+    state === "error" ? "Save failed" : state === "saving" ? "Saving…" : "Saved";
+  return (
+    <span
+      className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-card px-2.5 text-[11px] font-semibold text-muted"
+      title={label}
+    >
+      <span
+        className={`size-1.5 rounded-full ${dot} ${
+          state === "saving" ? "animate-pulse" : ""
+        }`}
+      />
+      <span className="hidden sm:inline">{label}</span>
+    </span>
+  );
+}
+
 export default function Board({ project }) {
   const [name, setName] = useState(project.name);
   const [board, setBoard] = useState(() => ({
     columns: Array.isArray(project.board?.columns) ? project.board.columns : [],
   }));
   const [q, setQ] = useState("");
-  const [composing, setComposing] = useState(null); // { kind: 'col'|'group'|'item', id }
+  const [status, setStatus] = useState("all");
+  const [prioFilter, setPrioFilter] = useState("all");
+  const [composing, setComposing] = useState(null);
   const [draft, setDraft] = useState("");
   const [draftPrio, setDraftPrio] = useState("");
   const [editing, setEditing] = useState(null);
-  const [confirm, setConfirm] = useState(null); // { title, message, onYes }
+  const [confirm, setConfirm] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
-  const [dropTarget, setDropTarget] = useState(null); // { groupId, at }
-  const [colOver, setColOver] = useState(null); // { id, before }
+  const [dropTarget, setDropTarget] = useState(null);
+  const [colOver, setColOver] = useState(null);
+  const [saveState, setSaveState] = useState("saved");
+  const [menuFor, setMenuFor] = useState(null);
+  const [collapsed, setCollapsed] = useState({});
 
+  const toast = useToast();
   const dragRef = useRef(null);
   const boardElRef = useRef(null);
   const composerRef = useRef(null);
+  const newColRef = useRef(null);
+  const searchRef = useRef(null);
   const cancelEditRef = useRef(false);
   const saveTimer = useRef(null);
   const pending = useRef(null);
 
-  // ---------- persistence (debounced PUT of the whole board) ----------
+  // ---------- persistence ----------
   function flush() {
     const b = pending.current;
     if (!b) return;
@@ -64,12 +160,18 @@ export default function Board({ project }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ board: b }),
       keepalive: true,
-    }).catch(() => {});
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error();
+        setSaveState("saved");
+      })
+      .catch(() => setSaveState("error"));
   }
   function saveBoard(next) {
     pending.current = next;
+    setSaveState("saving");
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(flush, 350);
+    saveTimer.current = setTimeout(flush, 400);
   }
   useEffect(
     () => () => {
@@ -85,6 +187,46 @@ export default function Board({ project }) {
     setBoard(next);
     saveBoard(next);
   }
+
+  function restore(snapshot) {
+    setBoard(snapshot);
+    saveBoard(snapshot);
+  }
+
+  function removeWithUndo(fn, message) {
+    const snapshot = board;
+    mutate(fn);
+    toast({
+      message,
+      actionLabel: "Undo",
+      onAction: () => restore(snapshot),
+    });
+  }
+
+  // ---------- keyboard shortcut for search ----------
+  useEffect(() => {
+    function onKey(e) {
+      const cmdK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
+      if ((e.key === "/" || cmdK) && !isTyping(e.target)) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // ---------- close item menu on outside click ----------
+  useEffect(() => {
+    if (!menuFor) return;
+    function onDown(e) {
+      if (e.target.closest("[data-menu-root]")) return;
+      if (e.target.closest(`[data-menu-trigger="${menuFor}"]`)) return;
+      setMenuFor(null);
+    }
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [menuFor]);
 
   // ---------- composers ----------
   useEffect(() => {
@@ -113,20 +255,20 @@ export default function Board({ project }) {
         if (f)
           f.g.items.push({ id: uid(), text: v, done: false, prio: draftPrio });
       });
-      setComposing({ kind: "item", id }); // keep open for rapid entry
+      setComposing({ kind: "item", id });
     } else if (kind === "group") {
       const gid = uid();
       mutate((b) => {
         const c = b.columns.find((x) => x.id === id);
         if (c) c.groups.push({ id: gid, title: v, items: [] });
       });
-      setComposing({ kind: "item", id: gid }); // jump into first todo
+      setComposing({ kind: "item", id: gid });
     } else {
       const cid = uid();
       mutate((b) => {
         b.columns.push({ id: cid, title: v, groups: [] });
       });
-      setComposing({ kind: "group", id: cid }); // jump into first sub-category
+      setComposing({ kind: "group", id: cid });
     }
     setDraft("");
     setDraftPrio("");
@@ -170,6 +312,7 @@ export default function Board({ project }) {
   }
   function startEdit(id) {
     setEditing(id);
+    setMenuFor(null);
   }
   function onEditKey(e, id) {
     if (e.key === "Enter") e.target.blur();
@@ -189,6 +332,26 @@ export default function Board({ project }) {
     mutate((b) => {
       const f = locate(b, id);
       if (f) f.item.text = v;
+    });
+  }
+  function moveItemBy(id, delta) {
+    setMenuFor(null);
+    mutate((b) => {
+      const f = locate(b, id);
+      if (!f) return;
+      const j = f.i + delta;
+      if (j < 0 || j >= f.g.items.length) return;
+      const arr = f.g.items;
+      [arr[f.i], arr[j]] = [arr[j], arr[f.i]];
+    });
+  }
+  function duplicateItem(id) {
+    setMenuFor(null);
+    mutate((b) => {
+      const f = locate(b, id);
+      if (!f) return;
+      const copy = { ...structuredClone(f.item), id: uid() };
+      f.g.items.splice(f.i + 1, 0, copy);
     });
   }
 
@@ -219,26 +382,22 @@ export default function Board({ project }) {
   }
 
   // ---------- deletes ----------
-  function askDeleteItem(it) {
-    setConfirm({
-      title: "Delete todo?",
-      message: `“${it.text}” will be removed.`,
-      onYes: () =>
-        mutate((b) => {
-          const f = locate(b, it.id);
-          if (f) f.g.items.splice(f.i, 1);
-        }),
-    });
+  function deleteItem(it) {
+    setMenuFor(null);
+    removeWithUndo((b) => {
+      const f = locate(b, it.id);
+      if (f) f.g.items.splice(f.i, 1);
+    }, "Todo deleted");
   }
   function askDeleteGroup(g) {
     setConfirm({
       title: "Delete sub-category?",
       message: `“${g.title}” and its ${nt(g.items.length)} will be removed.`,
       onYes: () =>
-        mutate((b) => {
+        removeWithUndo((b) => {
           const f = findGroup(b, g.id);
           if (f) f.c.groups = f.c.groups.filter((x) => x.id !== g.id);
-        }),
+        }, "Sub-category deleted"),
     });
   }
   function askDeleteCol(c) {
@@ -247,17 +406,44 @@ export default function Board({ project }) {
       title: "Delete column?",
       message: `“${c.title}” and its ${nt(todos)} will be removed.`,
       onYes: () =>
-        mutate((b) => {
+        removeWithUndo((b) => {
           b.columns = b.columns.filter((x) => x.id !== c.id);
-        }),
+        }, "Column deleted"),
     });
   }
 
-  // ---------- drag & drop ----------
+  // ---------- filtering ----------
   const term = q.trim().toLowerCase();
-  const visibleItems = (g) =>
-    g.items.filter((i) => !term || i.text.toLowerCase().includes(term));
+  const filtering = Boolean(term) || status !== "all" || prioFilter !== "all";
 
+  function matches(it) {
+    if (status === "open" && it.done) return false;
+    if (status === "done" && !it.done) return false;
+    if (prioFilter !== "all" && (it.prio || "") !== prioFilter) return false;
+    if (term && !it.text.toLowerCase().includes(term)) return false;
+    return true;
+  }
+  const visibleItems = (g) => g.items.filter(matches);
+
+  const stats = useMemo(() => {
+    let total = 0;
+    let done = 0;
+    for (const c of board.columns) {
+      for (const g of c.groups) {
+        for (const i of g.items) {
+          total += 1;
+          if (i.done) done += 1;
+        }
+      }
+    }
+    return {
+      total,
+      done,
+      pct: total ? Math.round((done / total) * 100) : 0,
+    };
+  }, [board]);
+
+  // ---------- drag & drop ----------
   function onColDragStart(e, id) {
     dragRef.current = { type: "col", id };
     e.dataTransfer.effectAllowed = "move";
@@ -303,7 +489,7 @@ export default function Board({ project }) {
     if (dragRef.current?.type !== "item") return;
     e.preventDefault();
     const els = Array.from(
-      e.currentTarget.querySelectorAll(".item:not(.dragging)")
+      e.currentTarget.querySelectorAll("li[data-item]:not([data-dragging])")
     );
     let refId = null;
     for (const el of els) {
@@ -331,9 +517,9 @@ export default function Board({ project }) {
     const idx = refItem
       ? g.items.findIndex((i) => i.id === refItem.id)
       : g.items.length;
-    moveItem(drag.id, g.id, idx);
+    moveItemTo(drag.id, g.id, idx);
   }
-  function moveItem(itemId, toGroupId, index) {
+  function moveItemTo(itemId, toGroupId, index) {
     mutate((b) => {
       const f = locate(b, itemId);
       if (!f) return;
@@ -354,14 +540,14 @@ export default function Board({ project }) {
   function onResizeDown(e, colId) {
     e.preventDefault();
     const handle = e.target;
-    const el = handle.closest(".col");
+    const el = handle.closest("[data-col]");
     const x0 = e.clientX;
     const w0 = el.getBoundingClientRect().width;
     let last = Math.round(w0);
     handle.setPointerCapture(e.pointerId);
     const mv = (ev) => {
-      const max = Math.max(240, boardElRef.current.clientWidth - 40);
-      const w = Math.max(240, Math.min(w0 + ev.clientX - x0, max));
+      const max = Math.max(260, boardElRef.current.clientWidth - 40);
+      const w = Math.max(260, Math.min(w0 + ev.clientX - x0, max));
       el.style.setProperty("--w", w + "px");
       last = Math.round(w);
     };
@@ -382,9 +568,10 @@ export default function Board({ project }) {
   // ---------- render helpers ----------
   function composer(kind, id, ph) {
     return (
-      <div className="composer">
+      <div className="rounded-xl border border-accent/40 bg-card p-2 shadow-soft">
         <input
           ref={composerRef}
+          className="w-full rounded-lg border border-line bg-bg px-2.5 py-2 text-base text-ink outline-none placeholder:text-muted/70 focus:border-accent sm:text-[15px]"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => onComposerKey(e, kind, id)}
@@ -392,26 +579,28 @@ export default function Board({ project }) {
           maxLength={120}
           aria-label={ph}
         />
-        <div className="row">
+        <div className="mt-2 flex items-center gap-2">
           {kind === "item" && (
             <select
-              className="psel"
+              className={`min-w-0 cursor-pointer rounded-lg border px-2 py-1.5 text-xs font-bold outline-none sm:text-[13px] ${PRIO_STYLE[draftPrio]}`}
               value={draftPrio}
               onChange={(e) => setDraftPrio(e.target.value)}
               aria-label="Priority"
             >
               <option value="">No priority</option>
-              <option value="low">Low priority</option>
-              <option value="medium">Medium priority</option>
-              <option value="high">High priority</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
             </select>
           )}
-          <button className="btn primary" onClick={() => commit(kind, id)}>
-            Save
-          </button>
-          <button className="btn" onClick={cancelComposer}>
-            Cancel
-          </button>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button className={btnSm} onClick={cancelComposer}>
+              Cancel
+            </button>
+            <button className={btnPrimarySm} onClick={() => commit(kind, id)}>
+              Add
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -419,80 +608,141 @@ export default function Board({ project }) {
 
   function itemHtml(it) {
     const ed = editing === it.id;
+    const ps = PRIO_STYLE[it.prio || ""] || PRIO_STYLE[""];
     return (
       <li
         key={it.id}
-        className={`item${it.done ? " done" : ""}${
-          draggingId === it.id ? " dragging" : ""
-        }`}
+        className={`group/item relative flex items-start gap-1.5 rounded-lg px-1 py-1.5 transition-colors hover:bg-bg-2/70 ${
+          it.done ? "text-muted" : ""
+        } ${draggingId === it.id ? "opacity-40" : ""}`}
         data-item={it.id}
+        data-dragging={draggingId === it.id ? "" : undefined}
         draggable={!ed}
         onDragStart={(e) => onItemDragStart(e, it.id)}
         onDragEnd={onDragEnd}
       >
-        <input
-          type="checkbox"
-          checked={it.done}
-          onChange={() => toggleItem(it.id)}
-          aria-label="Mark done"
-        />
-        {ed ? (
-          <input
-            className="edit"
-            defaultValue={it.text}
-            maxLength={120}
-            ref={(el) => {
-              if (el) {
-                el.focus();
-                el.select();
-              }
-            }}
-            onKeyDown={(e) => onEditKey(e, it.id)}
-            onBlur={(e) => commitEdit(it.id, e.target.value)}
-          />
-        ) : (
-          <span className="txt" onClick={() => startEdit(it.id)}>
-            {it.text}
-          </span>
-        )}
-        <select
-          className={`prio-sel ${it.prio || ""}`}
-          value={it.prio || ""}
-          onChange={(e) => setPrio(it.id, e.target.value)}
-          aria-label="Priority"
-        >
-          {PRIOS.map(([v, label]) => (
-            <option key={v} value={v}>
-              {label}
-            </option>
-          ))}
-        </select>
+        <span className="mt-0.5 hidden shrink-0 cursor-grab text-muted/60 opacity-0 transition-opacity group-hover/item:opacity-100 sm:block">
+          <GripVertical size={15} />
+        </span>
         <button
-          className="icon"
-          onClick={() => askDeleteItem(it)}
-          title="Delete todo"
-          aria-label="Delete todo"
+          type="button"
+          role="checkbox"
+          aria-checked={it.done}
+          aria-label={it.done ? "Mark as not done" : "Mark as done"}
+          onClick={() => toggleItem(it.id)}
+          className={`mt-0.5 grid size-[18px] flex-none place-items-center rounded-full border-2 transition-all ${
+            it.done
+              ? "border-lo bg-lo text-white"
+              : "border-line hover:border-accent"
+          }`}
         >
-          ✕
+          {it.done && <Check size={11} strokeWidth={3.2} />}
         </button>
+
+        <div className="min-w-0 flex-1">
+          {ed ? (
+            <input
+              className="w-full rounded-md border border-accent bg-bg px-1.5 py-0.5 text-base text-ink outline-none sm:text-[15px]"
+              defaultValue={it.text}
+              maxLength={120}
+              ref={(el) => {
+                if (el) {
+                  el.focus();
+                  el.select();
+                }
+              }}
+              onKeyDown={(e) => onEditKey(e, it.id)}
+              onBlur={(e) => commitEdit(it.id, e.target.value)}
+            />
+          ) : (
+            <span
+              className={`block cursor-text break-words text-[14.5px] leading-snug ${
+                it.done ? "line-through" : ""
+              }`}
+              onClick={() => startEdit(it.id)}
+            >
+              <Highlight text={it.text} term={term} />
+            </span>
+          )}
+          <div className="mt-1 flex items-center gap-1.5">
+            <select
+              className={`cursor-pointer rounded-full border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide outline-none ${ps} [&_option]:bg-card [&_option]:text-ink`}
+              value={it.prio || ""}
+              onChange={(e) => setPrio(it.id, e.target.value)}
+              aria-label="Priority"
+            >
+              {PRIOS.map(([v, label]) => (
+                <option key={v} value={v}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          data-menu-trigger={it.id}
+          className={`${iconBtn} -my-1 size-7 shrink-0 opacity-0 group-hover/item:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100`}
+          onClick={() => setMenuFor(menuFor === it.id ? null : it.id)}
+          title="Todo actions"
+          aria-label="Todo actions"
+        >
+          <MoreHorizontal size={16} />
+        </button>
+
+        {menuFor === it.id && (
+          <div
+            data-menu-root
+            className="animate-pop-in absolute top-8 right-1 z-20 w-40 overflow-hidden rounded-xl border border-line bg-card p-1 shadow-float"
+          >
+            <button
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium hover:bg-bg-2"
+              onClick={() => moveItemBy(it.id, -1)}
+            >
+              <ArrowUp size={14} /> Move up
+            </button>
+            <button
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium hover:bg-bg-2"
+              onClick={() => moveItemBy(it.id, 1)}
+            >
+              <ArrowDown size={14} /> Move down
+            </button>
+            <button
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium hover:bg-bg-2"
+              onClick={() => duplicateItem(it.id)}
+            >
+              <Copy size={14} /> Duplicate
+            </button>
+            <div className="my-1 h-px bg-line" />
+            <button
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium text-hi hover:bg-hi-soft"
+              onClick={() => deleteItem(it)}
+            >
+              <Trash size={14} /> Delete
+            </button>
+          </div>
+        )}
       </li>
     );
   }
 
   function groupHtml(g) {
     const vis = visibleItems(g);
-    if (term && !vis.length) return null;
+    if (filtering && !vis.length) return null;
     const done = g.items.filter((i) => i.done).length;
-    const pct = g.items.length
-      ? Math.round((done / g.items.length) * 100)
-      : 0;
+    const pct = g.items.length ? Math.round((done / g.items.length) * 100) : 0;
     const open = composing?.kind === "item" && composing.id === g.id;
     const showLine = dropTarget?.groupId === g.id;
     return (
-      <div className="group" key={g.id} data-group={g.id}>
-        <div className="g-head">
+      <div
+        className="rounded-xl border border-line/80 bg-card shadow-soft"
+        key={g.id}
+        data-group={g.id}
+      >
+        <div className="flex items-center gap-1 px-2 pt-1.5 pb-0.5">
           <input
-            className="g-title"
+            className="min-w-0 flex-1 rounded-md border-0 bg-transparent px-1.5 py-1 text-[13.5px] font-bold text-ink hover:bg-bg-2"
             value={g.title}
             maxLength={40}
             aria-label="Sub-category name"
@@ -500,44 +750,58 @@ export default function Board({ project }) {
             onBlur={() => normalizeGroup(g.id)}
             onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
           />
-          <span className="count">
+          <span className="shrink-0 rounded-full bg-bg-2 px-2 py-0.5 text-[11px] font-bold whitespace-nowrap text-muted">
             {done}/{g.items.length}
           </span>
           <button
-            className="icon"
+            className={`${iconBtn} size-7 shrink-0 opacity-60 hover:opacity-100`}
             onClick={() => askDeleteGroup(g)}
             title="Delete sub-category"
             aria-label="Delete sub-category"
           >
-            ✕
+            <Trash size={14} />
           </button>
         </div>
-        <div className="bar">
-          <i style={{ width: pct + "%" }} />
+
+        <div className="mx-2.5 mt-1 mb-1.5 h-1 overflow-hidden rounded-full bg-line/70">
+          <i
+            style={{ width: pct + "%" }}
+            className="block h-full rounded-full bg-lo transition-all duration-500"
+          />
         </div>
+
         <ul
-          className="items"
+          className="flex list-none flex-col gap-0.5 px-1.5"
           onDragOver={(e) => onItemsDragOver(e, g)}
           onDrop={(e) => onItemsDrop(e, g)}
         >
           {vis.map((it, idx) => (
             <Fragment key={it.id}>
-              {showLine && dropTarget.at === idx && <li className="drop-line" />}
+              {showLine && dropTarget.at === idx && (
+                <li className="my-0.5 h-[3px] list-none rounded-full bg-accent" />
+              )}
               {itemHtml(it)}
             </Fragment>
           ))}
-          {showLine && dropTarget.at >= vis.length && <li className="drop-line" />}
-          {!vis.length && <li className="empty">No todos yet.</li>}
+          {showLine && dropTarget.at >= vis.length && (
+            <li className="my-0.5 h-[3px] list-none rounded-full bg-accent" />
+          )}
+          {!vis.length && (
+            <li className="list-none px-1.5 py-2 text-[13px] text-muted">
+              {filtering ? "No matching todos." : "No todos yet."}
+            </li>
+          )}
         </ul>
-        <div className="g-foot">
+
+        <div className="px-1.5 pt-1 pb-1.5">
           {open ? (
-            composer("item", g.id, "Write a todo")
+            composer("item", g.id, "Write a todo…")
           ) : (
             <button
-              className="add"
+              className="flex w-full cursor-pointer touch-manipulation items-center gap-1.5 rounded-lg border-0 bg-transparent px-2 py-1.5 text-left text-[13px] font-semibold text-muted transition-colors hover:bg-bg-2 hover:text-ink"
               onClick={() => openComposer("item", g.id)}
             >
-              + Add todo
+              <Plus size={14} /> Add todo
             </button>
           )}
         </div>
@@ -547,36 +811,76 @@ export default function Board({ project }) {
 
   function colHtml(c) {
     const total = c.groups.reduce((n, g) => n + g.items.length, 0);
+    const done = c.groups.reduce(
+      (n, g) => n + g.items.filter((i) => i.done).length,
+      0
+    );
     const open = composing?.kind === "group" && composing.id === c.id;
     const body = c.groups.map(groupHtml).filter(Boolean);
     const over =
       colOver?.id === c.id
         ? colOver.before
-          ? " col-drop-before"
-          : " col-drop-after"
+          ? "before:absolute before:inset-y-0 before:-left-2 before:w-[3px] before:rounded-full before:bg-accent before:content-['']"
+          : "after:absolute after:inset-y-0 after:-right-2 after:w-[3px] after:rounded-full after:bg-accent after:content-['']"
         : "";
+
+    if (collapsed[c.id]) {
+      return (
+        <section
+          key={c.id}
+          className="flex w-full flex-none items-center gap-2 rounded-2xl border border-line/60 bg-col px-2 py-2 shadow-soft sm:w-14 sm:flex-col sm:py-2.5"
+          data-col={c.id}
+        >
+          <button
+            className={`${iconBtn} size-8`}
+            onClick={() => setCollapsed((s) => ({ ...s, [c.id]: false }))}
+            title="Expand column"
+            aria-label="Expand column"
+          >
+            <ChevronRight size={16} />
+          </button>
+          <span className="truncate text-sm font-bold sm:[writing-mode:vertical-rl] sm:rotate-180 sm:max-h-48">
+            {c.title}
+          </span>
+          <span className="shrink-0 rounded-full bg-card px-2 py-0.5 text-[11px] font-bold text-muted">
+            {done}/{total}
+          </span>
+          <button
+            className={`${iconBtn} size-8 sm:mt-auto`}
+            onClick={() => askDeleteCol(c)}
+            title="Delete column"
+            aria-label="Delete column"
+          >
+            <Trash size={14} />
+          </button>
+        </section>
+      );
+    }
+
     return (
       <section
         key={c.id}
-        className={`col${draggingId === c.id ? " dragging" : ""}${over}`}
+        className={`group/col relative flex w-full max-w-full flex-none flex-col rounded-2xl border border-line/60 bg-col shadow-soft transition-colors sm:w-[var(--w,340px)] ${
+          draggingId === c.id ? "opacity-45" : ""
+        } ${over}`}
         data-col={c.id}
         style={c.w ? { "--w": `${c.w}px` } : undefined}
         onDragOver={(e) => onColDragOver(e, c.id)}
         onDrop={(e) => onColDrop(e, c.id)}
       >
-        <div className="col-head">
+        <div className="flex items-center gap-0.5 px-2 pt-2 pb-1">
           <span
-            className="grip"
+            className="cursor-grab touch-manipulation select-none rounded-md p-1 leading-none text-muted/70 opacity-60 transition-opacity hover:bg-card hover:text-ink hover:opacity-100"
             draggable
             title="Drag to move column"
             aria-label="Drag to move column"
             onDragStart={(e) => onColDragStart(e, c.id)}
             onDragEnd={onDragEnd}
           >
-            ⠿
+            <GripVertical size={16} />
           </span>
           <input
-            className="col-title"
+            className="min-w-0 flex-1 rounded-md border-0 bg-transparent px-1.5 py-1 text-[15px] font-bold text-ink hover:bg-card/60"
             value={c.title}
             maxLength={40}
             aria-label="Column name"
@@ -584,45 +888,67 @@ export default function Board({ project }) {
             onBlur={() => normalizeCol(c.id)}
             onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
           />
-          <span className="count">{total}</span>
+          <span className="shrink-0 rounded-full bg-card px-2 py-0.5 text-[11px] font-bold whitespace-nowrap text-muted">
+            {total}
+          </span>
           <button
-            className="icon"
+            className={`${iconBtn} size-7 shrink-0`}
+            onClick={() => setCollapsed((s) => ({ ...s, [c.id]: true }))}
+            title="Collapse column"
+            aria-label="Collapse column"
+          >
+            <ChevronDown size={15} />
+          </button>
+          <button
+            className={`${iconBtn} size-7 shrink-0`}
             onClick={() => askDeleteCol(c)}
             title="Delete column"
             aria-label="Delete column"
           >
-            ✕
+            <Trash size={14} />
           </button>
         </div>
-        <div className="groups">
+
+        <div className="mx-2.5 mb-2 h-1 overflow-hidden rounded-full bg-line/60">
+          <i
+            className="block h-full rounded-full bg-accent/70 transition-all duration-500"
+            style={{ width: `${total ? (done / total) * 100 : 0}%` }}
+          />
+        </div>
+
+        <div className="flex flex-col gap-2.5 px-2 pb-1">
           {body.length ? (
             body
           ) : (
-            <div className="empty pad">
-              {term
+            <div className="rounded-xl border border-dashed border-line px-3 py-3 text-[13px] text-muted">
+              {filtering
                 ? "No matching todos."
                 : "Add a sub-category, such as a profile or project, to start adding todos."}
             </div>
           )}
         </div>
-        <div className="col-foot">
+
+        <div className="px-2 pt-1.5 pb-2">
           {open ? (
-            composer("group", c.id, "Sub-category name")
+            composer("group", c.id, "Sub-category name…")
           ) : (
             <button
-              className="add"
+              className="flex w-full cursor-pointer touch-manipulation items-center gap-1.5 rounded-lg border-0 bg-transparent px-2 py-1.5 text-left text-[13px] font-semibold text-muted transition-colors hover:bg-card hover:text-ink"
               onClick={() => openComposer("group", c.id)}
             >
-              + Add sub-category
+              <Plus size={14} /> Add sub-category
             </button>
           )}
         </div>
+
         <div
-          className="resize"
+          className="absolute inset-y-0 -right-1.5 hidden w-3.5 cursor-ew-resize touch-none sm:block"
           title="Drag to resize column"
           aria-label="Resize column"
           onPointerDown={(e) => onResizeDown(e, c.id)}
-        />
+        >
+          <span className="absolute top-1/2 left-[5px] h-10 w-1 -translate-y-1/2 rounded bg-muted opacity-20 transition-opacity group-hover/col:opacity-50" />
+        </div>
       </section>
     );
   }
@@ -630,50 +956,154 @@ export default function Board({ project }) {
   function addColClick() {
     openComposer("col", "");
     requestAnimationFrame(() => {
-      document
-        .querySelector(".new-col.open")
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      newColRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   }
 
+  const addColPlaceholder = composing?.kind === "col" ? (
+    <div
+      ref={newColRef}
+      className="w-full flex-none rounded-2xl border-2 border-accent/40 bg-col sm:w-80"
+    >
+      {composer("col", "", "Column name…")}
+    </div>
+  ) : (
+    <button
+      className="flex min-h-14 w-full flex-none cursor-pointer touch-manipulation items-center gap-2 rounded-2xl border-2 border-dashed border-line bg-transparent px-4 py-3 text-left text-sm font-semibold text-muted transition-colors hover:border-accent hover:text-ink sm:w-80"
+      onClick={() => openComposer("col", "")}
+    >
+      <Plus size={16} /> Add column
+    </button>
+  );
+
   return (
     <>
-      <header className="top">
-        <Link href="/" className="btn">
-          ← Projects
-        </Link>
-        <input
-          className="proj-title"
-          value={name}
-          size={Math.max(8, Math.min(40, name.length))}
-          maxLength={80}
-          aria-label="Project name"
-          onChange={(e) => setName(e.target.value)}
-          onBlur={saveName}
-          onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
-        />
-        <input
-          className="search"
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search todos"
-          aria-label="Search todos"
-        />
-        <button className="btn primary" onClick={addColClick}>
-          Add column
-        </button>
-        <ThemeToggle />
+      <header className="sticky top-0 z-30 border-b border-line/70 bg-bg/85 backdrop-blur-xl">
+        <div className="mx-auto w-full max-w-[1700px] px-3 sm:px-5">
+          <div className="flex flex-wrap items-center gap-2 py-2.5">
+            <Link href="/" className={`${btnGhost} shrink-0`}>
+              <ArrowLeft size={16} />
+              <span className="hidden sm:inline">Projects</span>
+            </Link>
+            <div className="hidden h-5 w-px bg-line sm:block" />
+            <input
+              className="min-w-0 flex-1 rounded-lg border-0 bg-transparent px-1 py-1 text-lg font-extrabold tracking-tight text-ink outline-none hover:bg-card/50 focus:bg-card/60 sm:text-xl"
+              value={name}
+              maxLength={80}
+              aria-label="Project name"
+              onChange={(e) => setName(e.target.value)}
+              onBlur={saveName}
+              onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
+            />
+            <div className="flex shrink-0 items-center gap-1.5">
+              <div className="hidden items-center gap-2 rounded-full border border-line bg-card px-2.5 py-1 text-[11px] font-semibold md:flex">
+                <span className="text-muted">
+                  {stats.done}/{stats.total}
+                </span>
+                <span className="h-1.5 w-14 overflow-hidden rounded-full bg-line">
+                  <i
+                    className="block h-full rounded-full bg-lo transition-all duration-500"
+                    style={{ width: `${stats.pct}%` }}
+                  />
+                </span>
+                <span className="text-ink">{stats.pct}%</span>
+              </div>
+              <SaveStatus state={saveState} />
+              <ThemeToggle compact />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 pb-2.5">
+            <div className="relative min-w-[160px] flex-1 sm:max-w-xs">
+              <Search
+                size={16}
+                className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted"
+              />
+              <input
+                ref={searchRef}
+                className={`${field} py-1.5 pr-8 pl-8 text-sm`}
+                type="text"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => e.key === "Escape" && setQ("")}
+                placeholder="Search todos  ( / )"
+                aria-label="Search todos"
+              />
+              {q && (
+                <button
+                  className="absolute top-1/2 right-1.5 grid size-6 -translate-y-1/2 place-items-center rounded-md text-muted hover:bg-bg-2 hover:text-ink"
+                  onClick={() => setQ("")}
+                  aria-label="Clear search"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center rounded-lg border border-line bg-card p-0.5 text-[13px] font-semibold">
+              {[
+                ["all", "All"],
+                ["open", "Open"],
+                ["done", "Done"],
+              ].map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setStatus(v)}
+                  className={`rounded-md px-2.5 py-1 transition-colors ${
+                    status === v
+                      ? "bg-accent text-accent-ink shadow-soft"
+                      : "text-muted hover:text-ink"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <select
+              className={`${field} h-8 w-auto cursor-pointer py-0 text-[13px] font-semibold`}
+              value={prioFilter}
+              onChange={(e) => setPrioFilter(e.target.value)}
+              aria-label="Filter by priority"
+            >
+              <option value="all">Any priority</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+              <option value="">No priority</option>
+            </select>
+
+            <button className={`${btnPrimary} ml-auto`} onClick={addColClick}>
+              <Plus size={16} />
+              Add column
+            </button>
+          </div>
+        </div>
       </header>
 
-      <main className="board" ref={boardElRef}>
-        {board.columns.map(colHtml)}
-        {composing?.kind === "col" ? (
-          <div className="new-col open">{composer("col", "", "Column name")}</div>
+      <main
+        className="mx-auto flex w-full max-w-[1700px] flex-col gap-3 px-3 py-4 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] sm:flex-row sm:flex-nowrap sm:items-start sm:gap-4 sm:overflow-x-auto sm:px-5 sm:pb-6"
+        ref={boardElRef}
+      >
+        {board.columns.length === 0 && composing?.kind !== "col" ? (
+          <div className="animate-pop-in flex w-full flex-col items-center rounded-2xl border border-dashed border-line bg-card/50 px-6 py-16 text-center">
+            <span className="grid size-14 place-items-center rounded-2xl bg-accent-soft text-accent">
+              <Columns size={26} />
+            </span>
+            <h2 className="mt-4 text-lg font-bold">This board is empty</h2>
+            <p className="mt-1 max-w-sm text-sm text-muted">
+              Columns hold sub-categories, and sub-categories hold your todos.
+              Add your first column to get going.
+            </p>
+            <button className={`${btnPrimary} mt-5`} onClick={addColClick}>
+              <Plus size={16} /> Add your first column
+            </button>
+          </div>
         ) : (
-          <button className="new-col" onClick={() => openComposer("col", "")}>
-            + Add column
-          </button>
+          <>
+            {board.columns.map(colHtml)}
+            {addColPlaceholder}
+          </>
         )}
       </main>
 

@@ -13,12 +13,16 @@ export async function PUT(request, { params }) {
   if (!project) return Response.json({ error: "Not found" }, { status: 404 });
 
   const body = await request.json().catch(() => ({}));
+  let changed = false;
   if (typeof body.name === "string" && body.name.trim()) {
     project.name = body.name.trim().slice(0, 80);
+    changed = true;
   }
   if (body.board && Array.isArray(body.board.columns)) {
     project.board = body.board;
+    changed = true;
   }
+  if (changed) project.updatedAt = Date.now();
   await db().set(projectKey(id), project);
   return Response.json(project);
 }
