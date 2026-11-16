@@ -154,6 +154,13 @@ export const Flag = (p) => (
   </Svg>
 );
 
+export const Calendar = (p) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="18" rx="2" />
+    <path d="M16 2v4M8 2v4M3 10h18" />
+  </Svg>
+);
+
 export const ArrowUp = (p) => (
   <Svg {...p}>
     <path d="m6 15 6-6 6 6" />

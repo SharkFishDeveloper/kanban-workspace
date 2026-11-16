@@ -17,6 +17,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Calendar,
   Check,
   ChevronDown,
   ChevronRight,
@@ -47,6 +48,58 @@ const PRIO_STYLE = {
 };
 
 const nt = (n) => (n === 1 ? "1 todo" : n + " todos");
+
+function parseDue(due) {
+  if (!due) return null;
+  const [y, m, d] = due.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+function daysUntil(due) {
+  const d = parseDue(due);
+  if (!d) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((d - today) / 86400000);
+}
+
+function formatDue(due) {
+  const d = parseDue(due);
+  if (!d) return "";
+  const diff = daysUntil(due);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(d.getFullYear() === new Date().getFullYear()
+      ? {}
+      : { year: "numeric" }),
+  });
+}
+
+function dueStyle(due, done) {
+  if (!due) return "border-line bg-transparent text-muted hover:border-accent";
+  const diff = daysUntil(due);
+  if (done) return "border-line bg-bg-2 text-muted";
+  if (diff < 0) return "border-hi/30 bg-hi-soft text-hi";
+  if (diff === 0) return "border-med/30 bg-med-soft text-med";
+  if (diff <= 7) return "border-accent/30 bg-accent-soft text-accent";
+  return "border-line bg-bg-2 text-muted";
+}
+
+function dueTitle(due) {
+  const d = parseDue(due);
+  if (!d) return "Set deadline";
+  return "Deadline: " + d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
 
 function locate(b, itemId) {
   for (const c of b.columns) {
@@ -101,21 +154,14 @@ function Highlight({ text, term }) {
 }
 
 function SaveStatus({ state }) {
-  const dot =
-    state === "error" ? "bg-hi" : state === "saved" ? "bg-lo" : "bg-med";
   const label =
     state === "error" ? "Save failed" : state === "saving" ? "Saving…" : "Saved";
   return (
     <span
-      className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-card px-2.5 text-[11px] font-semibold text-muted"
+      className="inline-flex h-8 items-center rounded-full border border-line bg-card px-2.5 text-[11px] font-semibold text-muted"
       title={label}
     >
-      <span
-        className={`size-1.5 rounded-full ${dot} ${
-          state === "saving" ? "animate-pulse" : ""
-        }`}
-      />
-      <span className="hidden sm:inline">{label}</span>
+      <span>{label}</span>
     </span>
   );
 }
@@ -128,9 +174,11 @@ export default function Board({ project }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [prioFilter, setPrioFilter] = useState("all");
+  const [dueFilter, setDueFilter] = useState("all");
   const [composing, setComposing] = useState(null);
   const [draft, setDraft] = useState("");
   const [draftPrio, setDraftPrio] = useState("");
+  const [draftDue, setDraftDue] = useState("");
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
@@ -237,11 +285,13 @@ export default function Board({ project }) {
     setComposing({ kind, id });
     setDraft("");
     setDraftPrio("");
+    setDraftDue("");
   }
   function cancelComposer() {
     setComposing(null);
     setDraft("");
     setDraftPrio("");
+    setDraftDue("");
   }
   function commit(kind, id) {
     const v = draft.trim();
@@ -253,7 +303,13 @@ export default function Board({ project }) {
       mutate((b) => {
         const f = findGroup(b, id);
         if (f)
-          f.g.items.push({ id: uid(), text: v, done: false, prio: draftPrio });
+          f.g.items.push({
+            id: uid(),
+            text: v,
+            done: false,
+            prio: draftPrio,
+            due: draftDue,
+          });
       });
       setComposing({ kind: "item", id });
     } else if (kind === "group") {
@@ -272,6 +328,7 @@ export default function Board({ project }) {
     }
     setDraft("");
     setDraftPrio("");
+    setDraftDue("");
   }
   function onComposerKey(e, kind, id) {
     if (e.key === "Enter") {
@@ -308,6 +365,12 @@ export default function Board({ project }) {
     mutate((b) => {
       const f = locate(b, id);
       if (f) f.item.prio = prio;
+    });
+  }
+  function setDue(id, due) {
+    mutate((b) => {
+      const f = locate(b, id);
+      if (f) f.item.due = due;
     });
   }
   function startEdit(id) {
@@ -414,12 +477,25 @@ export default function Board({ project }) {
 
   // ---------- filtering ----------
   const term = q.trim().toLowerCase();
-  const filtering = Boolean(term) || status !== "all" || prioFilter !== "all";
+  const filtering =
+    Boolean(term) ||
+    status !== "all" ||
+    prioFilter !== "all" ||
+    dueFilter !== "all";
 
   function matches(it) {
     if (status === "open" && it.done) return false;
     if (status === "done" && !it.done) return false;
     if (prioFilter !== "all" && (it.prio || "") !== prioFilter) return false;
+    if (dueFilter !== "all") {
+      const diff = daysUntil(it.due);
+      if (dueFilter === "none" && it.due) return false;
+      if (dueFilter === "overdue" && (!it.due || it.done || diff >= 0))
+        return false;
+      if (dueFilter === "today" && (!it.due || diff !== 0)) return false;
+      if (dueFilter === "week" && (!it.due || diff < 0 || diff > 7))
+        return false;
+    }
     if (term && !it.text.toLowerCase().includes(term)) return false;
     return true;
   }
@@ -579,7 +655,7 @@ export default function Board({ project }) {
           maxLength={120}
           aria-label={ph}
         />
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2.5">
           {kind === "item" && (
             <select
               className={`min-w-0 cursor-pointer rounded-lg border px-2 py-1.5 text-xs font-bold outline-none sm:text-[13px] ${PRIO_STYLE[draftPrio]}`}
@@ -592,6 +668,16 @@ export default function Board({ project }) {
               <option value="medium">Medium</option>
               <option value="high">High</option>
             </select>
+          )}
+          {kind === "item" && (
+            <input
+              type="date"
+              className="min-w-0 cursor-pointer rounded-lg border border-line bg-card px-2 py-1.5 text-xs font-bold text-muted outline-none hover:border-accent focus:border-accent sm:text-[13px]"
+              value={draftDue}
+              onChange={(e) => setDraftDue(e.target.value)}
+              title="Set deadline"
+              aria-label="Deadline"
+            />
           )}
           <div className="ml-auto flex items-center gap-1.5">
             <button className={btnSm} onClick={cancelComposer}>
@@ -664,7 +750,7 @@ export default function Board({ project }) {
               <Highlight text={it.text} term={term} />
             </span>
           )}
-          <div className="mt-1 flex items-center gap-1.5">
+          <div className="mt-1 flex flex-wrap items-center gap-2.5">
             <select
               className={`cursor-pointer rounded-full border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide outline-none ${ps} [&_option]:bg-card [&_option]:text-ink`}
               value={it.prio || ""}
@@ -677,6 +763,36 @@ export default function Board({ project }) {
                 </option>
               ))}
             </select>
+            <span
+              className={`relative inline-flex cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${dueStyle(
+                it.due,
+                it.done
+              )}`}
+              title={dueTitle(it.due)}
+            >
+              <Calendar size={10} />
+              <span className="whitespace-nowrap">
+                {it.due ? formatDue(it.due) : "Due date"}
+              </span>
+              <input
+                type="date"
+                className="absolute inset-0 size-full cursor-pointer opacity-0"
+                value={it.due || ""}
+                onChange={(e) => setDue(it.id, e.target.value)}
+                aria-label="Deadline"
+              />
+            </span>
+            {it.due && (
+              <button
+                type="button"
+                className="grid size-4 place-items-center rounded-full text-muted hover:bg-bg-2 hover:text-hi"
+                onClick={() => setDue(it.id, "")}
+                title="Clear deadline"
+                aria-label="Clear deadline"
+              >
+                <X size={11} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -1013,7 +1129,7 @@ export default function Board({ project }) {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 pb-2.5">
+          <div className="flex flex-wrap items-center gap-2.5 pb-2.5">
             <div className="relative min-w-[160px] flex-1 sm:max-w-xs">
               <Search
                 size={16}
@@ -1061,7 +1177,7 @@ export default function Board({ project }) {
             </div>
 
             <select
-              className={`${field} h-8 w-auto cursor-pointer py-0 text-[13px] font-semibold`}
+              className="h-8 w-auto cursor-pointer rounded-lg border border-line bg-card px-2.5 py-0 text-[13px] font-semibold text-ink outline-none transition-colors hover:border-accent focus:border-accent focus:ring-2 focus:ring-accent/20"
               value={prioFilter}
               onChange={(e) => setPrioFilter(e.target.value)}
               aria-label="Filter by priority"
@@ -1071,6 +1187,19 @@ export default function Board({ project }) {
               <option value="medium">Medium</option>
               <option value="low">Low</option>
               <option value="">No priority</option>
+            </select>
+
+            <select
+              className="h-8 w-auto cursor-pointer rounded-lg border border-line bg-card px-2.5 py-0 text-[13px] font-semibold text-ink outline-none transition-colors hover:border-accent focus:border-accent focus:ring-2 focus:ring-accent/20"
+              value={dueFilter}
+              onChange={(e) => setDueFilter(e.target.value)}
+              aria-label="Filter by deadline"
+            >
+              <option value="all">Any deadline</option>
+              <option value="overdue">Overdue</option>
+              <option value="today">Due today</option>
+              <option value="week">Next 7 days</option>
+              <option value="none">No deadline</option>
             </select>
 
             <button className={`${btnPrimary} ml-auto`} onClick={addColClick}>
